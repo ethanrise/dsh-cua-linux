@@ -57,7 +57,18 @@ jobs:
             echo "::notice::dsh-cua-linux@${version} 已在 npm 上，跳过发布"
             exit 0
           fi
-          npm publish --provenance --access public
+          set +e
+          out="$(npm publish --provenance --access public 2>&1)"
+          code=$?
+          echo "$out"
+          if [ $code -ne 0 ]; then
+            # 401/403/EOTP 都不是代码问题，而是凭证问题，直接给出可操作的提示
+            if echo "$out" | grep -qE 'E401|E403|EOTP|401 Unauthorized'; then
+              echo "::error::npm 拒绝了这次发布：NPM_TOKEN 可能已过期、权限不足，或账号要求 2FA。"
+              echo "::error::到 npmjs.com 重新生成 token，更新仓库 Secret NPM_TOKEN，然后重推 tag。"
+            fi
+            exit $code
+          fi
           echo "::notice::已发布 dsh-cua-linux@${version}"
 
       - name: Publish release
