@@ -1,6 +1,6 @@
 name: release
 
-# 推 v* 标签时自动：跑测试 → 打包 → 发 Release 并挂上 tgz。
+# 推 v* 标签时自动：校验版本 → 跑测试 → 打包 → 发 npm → 发 GitHub Release（挂 tgz）。
 # 资产名固定为 dsh-cua-linux.tgz（不带版本号）：
 #   latest/download/ 只解析 latest，文件名照字面取，带版本号会在下次发版后 404。
 on:
@@ -8,17 +8,21 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write
+  contents: write   # 建 Release、传资产
+  id-token: write   # npm provenance
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Tag must match package.json
         run: |
@@ -41,6 +45,20 @@ jobs:
           mv dsh-cua-linux-*.tgz dsh-cua-linux.tgz
           ls -lh dsh-cua-linux.tgz
           tar tzf dsh-cua-linux.tgz | head -20
+
+      # 幂等：版本已经在 npm 上就跳过，避免重推 tag 时因 E403 整条流水线失败
+      - name: Publish to npm
+        if: env.NPM_TOKEN != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if npm view "dsh-cua-linux@${version}" version >/dev/null 2>&1; then
+            echo "::notice::dsh-cua-linux@${version} 已在 npm 上，跳过发布"
+            exit 0
+          fi
+          npm publish --provenance --access public
+          echo "::notice::已发布 dsh-cua-linux@${version}"
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
