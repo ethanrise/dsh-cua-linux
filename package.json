@@ -1,0 +1,63 @@
+{
+  "name": "dsh-cua-linux",
+  "version": "0.3.0",
+  "description": "Linux (X11/XWayland) computer-use backend for DeepSeek Harness: window enumeration, screenshots, XTEST input injection, and a CDP channel for Chromium.",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "computer-use",
+    "cua",
+    "linux",
+    "x11",
+    "wayland",
+    "xdotool",
+    "cdp",
+    "screenshot"
+  ],
+  "files": [
+    "index.js",
+    "lib/",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "assets/",
+    "screenshots.json",
+    "CHANGELOG.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "compatibility": {
+      "node": ">=22.18.0"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.1.7-rc.1 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ethanrise/dsh-cua-linux.git"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "smoke:x11": "node scripts/smoke-x11.mjs",
+    "smoke:cdp": "node scripts/smoke-cdp.mjs",
+    "check": "node --check index.js && node --check lib/*.js"
+  },
+  "dependencies": {
+    "x11": "^4.4.0"
+  },
+  "homepage": "https://github.com/ethanrise/dsh-cua-linux",
+  "bugs": {
+    "url": "https://github.com/ethanrise/dsh-cua-linux/issues"
+  }
+}

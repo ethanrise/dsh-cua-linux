@@ -1,0 +1,6 @@
+# dsh-cua-linux bundle patch：把本插件插入 profile 的图层栈。
+# 由 dsh.bundle.patch 消费；insert 的 name 必须是本包的包名，加载器从 profile 的
+# node_modules 解析它并作为 Cordis 插件加载。
+- insert:
+    - id: dsh-cua-linux
+      name: dsh-cua-linux
