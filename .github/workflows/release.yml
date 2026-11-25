@@ -1,0 +1,50 @@
+name: release
+
+# 推 v* 标签时自动：跑测试 → 打包 → 发 Release 并挂上 tgz。
+# 资产名固定为 dsh-cua-linux.tgz（不带版本号）：
+#   latest/download/ 只解析 latest，文件名照字面取，带版本号会在下次发版后 404。
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Tag must match package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag v$tag does not match package.json $pkg"
+            exit 1
+          fi
+
+      - run: npm install --no-audit --no-fund
+
+      - run: npm run check
+
+      - run: npm test
+
+      - name: Pack
+        run: |
+          npm pack
+          mv dsh-cua-linux-*.tgz dsh-cua-linux.tgz
+          ls -lh dsh-cua-linux.tgz
+          tar tzf dsh-cua-linux.tgz | head -20
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dsh-cua-linux.tgz
+          generate_release_notes: true
+          fail_on_unmatched_files: true
