@@ -58,13 +58,15 @@ acting on a state it never reached. Each action therefore reports what was obser
 - Browser `fill` reads `element.value` back and fails on mismatch.
 - Browser `click` / `key` watch DOM mutations and URL changes.
 
-Three outcomes, deliberately distinct. Tool messages are currently in Chinese, so the block
-below is verbatim output rather than a translation:
+Three outcomes, deliberately distinct:
 
 ```
-✓ 动作点附近发生变化（7471 像素 / 31.21%）      verified
-⚠ 动作点附近与窗口均无变化                       dispatched, no visible feedback
-? 无法判定：该区域本身在动（转圈/视频）            undecidable — not guessed
+✓ Area around the action point changed (7471 px / 31.21%)
+⚠ nothing changed around the action point or elsewhere — the event was dispatched
+  but no feedback was observed; it may be a repeat action, a non-interactive
+  target, or an operation that does not repaint
+? Undecidable: the region changes on its own (1.20%), while the action changed
+  only 0.13%
 ```
 
 `⚠` says the event **was** sent; it does not say the operation failed. A second click on an

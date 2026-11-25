@@ -33,7 +33,13 @@ dsh plugin add ethanrise/dsh-cua-linux
 - 先采两帧（间隔 250ms）测「自发变化率」，光标闪烁不再被当成动作生效
 - 浏览器 `fill` 读回 `element.value` 严格比对；`click` / `key` 看 DOM 突变与 URL 变化
 
-三种结论刻意分开：`✓` 生效 / `⚠` 已发出但无反馈 / `?` 无法判定（转圈、视频等大面积动画）。
+三种结论刻意分开，实测输出如下（工具报文统一用英文，便于国际化）：
+
+```
+✓ Area around the action point changed (7471 px / 31.21%)      生效
+⚠ nothing changed around the action point or elsewhere …        已发出但无反馈
+? Undecidable: the region changes on its own (1.20%) …          无法判定（转圈/视频）
+```
 
 ## 已知边界
 

@@ -27,7 +27,7 @@ test('type 工具对非 ASCII 明确失败而不是静默', async () => {
   const tool = reg.find((t) => t.name === 'cua_linux_type')
   const out = await tool.execute({ text: '知识星球' })
   assert.equal(out.ok, false)
-  assert.match(out.result, /非 ASCII/)
+  assert.match(out.result, /Non-ASCII/)
 })
 
 test('PNG 编码器产出合法签名与 IHDR 尺寸', () => {

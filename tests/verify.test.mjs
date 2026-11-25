@@ -20,7 +20,7 @@ test('judgeVisual：有变化判 verified，无变化给出可读原因', () => 
   assert.equal(judgeVisual({ changed: 50, total: 100, ratio: 0.5 }).verified, true)
   const j = judgeVisual({ changed: 0, total: 100, ratio: 0 })
   assert.equal(j.verified, false)
-  assert.match(j.text, /无变化/)
+  assert.match(j.text, /did not change/)
 })
 
 test('judgeDom：导航优先，其次突变数', () => {
@@ -54,15 +54,15 @@ test('judgeTwoTier：区域没变但整窗变 → 仍算生效并说明原因', 
     window: { changed: 30, total: 100, ratio: 0.3 },
   })
   assert.equal(j.verified, true)
-  assert.match(j.text, /其他区域/)
+  assert.match(j.text, /elsewhere/)
 })
 
-test('judgeTwoTier：区域不稳定时给"无法判定"而不是随便判', () => {
+test('judgeTwoTier：区域不稳定时给"Undecidable"而不是随便判', () => {
   const j = judgeTwoTier({
     noise: 0.01,
     signal: { changed: 1, total: 100, ratio: 0.01 },
     window: { changed: 0, total: 100, ratio: 0 },
   })
   assert.equal(j.verified, null)
-  assert.match(j.text, /无法判定/)
+  assert.match(j.text, /Undecidable/)
 })

@@ -1,6 +1,6 @@
 {
   "name": "dsh-cua-linux",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Linux (X11/XWayland) computer-use backend for DeepSeek Harness: window enumeration, screenshots, XTEST input injection, and a CDP channel for Chromium.",
   "type": "module",
   "main": "index.js",

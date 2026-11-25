@@ -19,7 +19,7 @@ test('插件能把工具注册进 ctx.tools（离屏、不依赖宿主）', asyn
   assert.ok(tool.description.length > 20)
   const out = await tool.execute({ cdpPorts: '9222' })
   assert.equal(out.ok, true)
-  assert.ok(out.result.includes('Linux computer-use 能力探测'))
+  assert.ok(out.result.includes('Linux computer-use capability probe'))
 })
 
 test('插件名与包名一致（loader 按 name 解析）', () => {

@@ -112,7 +112,7 @@ export function apply(ctx) {
       noise,
       signal: regionDiff,
       window: windowDiff,
-      areaLabel: box ? '动作点附近' : label || (wid ? '窗口画面' : '整个屏幕'),
+      areaLabel: box ? 'Area around the action point' : label || (wid ? 'Window' : 'Whole screen'),
     })
   }
 
@@ -163,7 +163,7 @@ export function apply(ctx) {
       const wins = await x.listWindows({ minArea: args.minArea || 4 })
       if (!wins.length) return ok('（没有可见窗口）')
       const lines = wins.map((w, i) => `${i + 1}. ${fmtWindow(w)}`)
-      return ok(`可见窗口 ${wins.length} 个（自上而下）：\n${lines.join('\n')}`)
+      return ok(`${wins.length} visible window(s), top to bottom:\n${lines.join('\n')}`)
     }),
   }))
 
@@ -186,7 +186,7 @@ export function apply(ctx) {
       const out = args.path || path.join(os.tmpdir(), `cua-linux-${Date.now()}.png`)
       fs.writeFileSync(out, shot.png)
       const kb = (shot.png.length / 1024).toFixed(0)
-      return ok(`已截图 ${shot.width}x${shot.height} (${kb}KB)\n路径：${out}`)
+      return ok(`Screenshot ${shot.width}x${shot.height} (${kb}KB)\nPath: ${out}`)
     }),
   }))
 
@@ -209,12 +209,12 @@ export function apply(ctx) {
       // 先校验坐标：越界是确定性失败，不该靠"看画面有没有变"来发现
       const size = await x.windowSize(args.wid)
       if (args.x < 0 || args.y < 0 || args.x >= size.width || args.y >= size.height) {
-        return fail(`✗ 坐标越界：窗口 0x${Number(args.wid).toString(16)} 只有 ${size.width}x${size.height}，收到 (${args.x},${args.y})`)
+        return fail(`✗ Out of bounds: window 0x${Number(args.wid).toString(16)} is ${size.width}x${size.height}, got (${args.x},${args.y})`)
       }
       if (args.activate !== false) await x.ensureOnTop(args.wid)
       const j = await actVerifiedVisual({ wid: args.wid, point: { x: args.x, y: args.y } }, (X) =>
         X.click(args.wid, args.x, args.y, { button: args.button || 1, count: args.count || 1 }))
-      return ok(`已点击 0x${Number(args.wid).toString(16)} @(${args.x},${args.y}) button=${args.button || 1} count=${args.count || 1}\n验证：${line(j)}`)
+      return ok(`Clicked 0x${Number(args.wid).toString(16)} at (${args.x},${args.y}) button=${args.button || 1} count=${args.count || 1}\nVerify: ${line(j)}`)
     }),
   }))
 
@@ -229,7 +229,7 @@ export function apply(ctx) {
     output: OUT,
     execute: guard(async (args) => {
       const j = await actVerifiedVisual({}, (X) => X.pressKey(args.combo))
-      return ok(`已发送按键：${args.combo}\n验证：${line(j)}`)
+      return ok(`Sent key: ${args.combo}\nVerify: ${line(j)}`)
     }),
   }))
 
@@ -247,10 +247,10 @@ export function apply(ctx) {
       const text = String(args.text ?? '')
       const bad = [...text].find((c) => c.charCodeAt(0) > 0x7e)
       if (bad !== undefined) {
-        return fail(`✗ 含非 ASCII 字符 ${JSON.stringify(bad)}：XTEST 无法注入，请改用 CDP 通道（浏览器）或剪贴板`)
+        return fail(`✗ Non-ASCII character ${JSON.stringify(bad)}: XTEST cannot inject it — use the CDP channel (browsers) or the clipboard`)
       }
       const j = await actVerifiedVisual({}, (X) => X.typeAscii(text))
-      return ok(`已输入 ${text.length} 个字符：${text}\n验证：${line(j)}`)
+      return ok(`Typed ${text.length} character(s): ${text}\nVerify: ${line(j)}`)
     }),
   }))
 
@@ -271,7 +271,7 @@ export function apply(ctx) {
       const x = await x11()
       const size = await x.windowSize(args.wid)
       if (args.x < 0 || args.y < 0 || args.x >= size.width || args.y >= size.height) {
-        return fail(`✗ 坐标越界：窗口只有 ${size.width}x${size.height}，收到 (${args.x},${args.y})`)
+        return fail(`✗ Out of bounds: window is ${size.width}x${size.height}, got (${args.x},${args.y})`)
       }
       if (args.activate !== false) await x.ensureOnTop(args.wid)
       const j = await actVerifiedVisual({ wid: args.wid, point: { x: args.x, y: args.y }, radius: 220 }, (X) =>
@@ -280,7 +280,7 @@ export function apply(ctx) {
           axis: args.axis === 'h' ? 'h' : 'v',
           dir: args.dir === -1 ? -1 : 1,
         }))
-      return ok(`已在 0x${Number(args.wid).toString(16)} @(${args.x},${args.y}) 滚动 ${args.notches || 3} 格\n验证：${line(j)}`)
+      return ok(`Scrolled 0x${Number(args.wid).toString(16)} at (${args.x},${args.y}) by ${args.notches || 3} notch(es)\nVerify: ${line(j)}`)
     }),
   }))
   // ================= M2：Chromium CDP 通道 =================
@@ -320,11 +320,11 @@ export function apply(ctx) {
       const m = await cdp()
       const port = args.port || 9222
       if (await m.hasDebugPort(port)) {
-        return ok(`端口 ${port} 已有可用的 DevTools 端点，直接复用（未重复启动）。`)
+        return ok(`Port ${port} already exposes a DevTools endpoint; reusing it (nothing was launched).`)
       }
       const proc = await m.launch({ port, url: args.url || 'about:blank', headless: !!args.headless })
       await m.waitReady(port, 25000)
-      return ok(`已启动 Chromium：pid=${proc.pid} port=${port}\n地址：${args.url || 'about:blank'}`)
+      return ok(`Launched Chromium: pid=${proc.pid} port=${port}\nURL: ${args.url || 'about:blank'}`)
     }),
   }))
 
@@ -361,7 +361,7 @@ export function apply(ctx) {
       const landed = r?.url || ''
       const host = (() => { try { return new URL(args.url).host } catch { return '' } })()
       const okHost = host ? landed.includes(host) : true
-      return ok(`已导航到 ${args.url}\n实际落地：${landed}${okHost ? '' : ' ⚠ 与目标域名不一致'}\n标题：${r?.title || '(空)'}`)
+      return ok(`Navigated to ${args.url}\nLanded on: ${landed}${okHost ? '' : ' ⚠ host differs from the target'}\nTitle: ${r?.title || '(empty)'}`)
     }),
   }))
 
@@ -384,11 +384,11 @@ export function apply(ctx) {
             return e ? e.value : null; })()`)
       })
       // 闭环：读回值必须与写入一致，否则就是没进框（比如元素是只读的或被遮挡层接管）
-      if (val === null) return fail(`✗ 找不到元素 ${args.selector}，未写入`)
+      if (val === null) return fail(`✗ Element not found: ${args.selector}; nothing was written`)
       if (val !== String(args.text)) {
-        return fail(`✗ 写入未生效：期望 ${JSON.stringify(args.text)}，读回 ${JSON.stringify(val)}`)
+        return fail(`✗ Write did not stick: expected ${JSON.stringify(args.text)}, read back ${JSON.stringify(val)}`)
       }
-      return ok(`已填入 ${JSON.stringify(args.text)}\n验证：✓ 读回值一致`)
+      return ok(`Filled ${JSON.stringify(args.text)}\nVerify: ✓ read-back matches`)
     }),
   }))
 
@@ -410,7 +410,7 @@ export function apply(ctx) {
         await sleep(350)
         return v.judgeDom(await c.watchRead())
       })
-      return ok(`已点击 ${args.selector}\n验证：${line(j)}`)
+      return ok(`Clicked ${args.selector}\nVerify: ${line(j)}`)
     }),
   }))
 
@@ -430,7 +430,7 @@ export function apply(ctx) {
         await sleep(400)
         return v.judgeDom(await c.watchRead())
       })
-      return ok(`已发送按键：${args.key}\n验证：${line(j)}`)
+      return ok(`Sent key: ${args.key}\nVerify: ${line(j)}`)
     }),
   }))
 
@@ -467,7 +467,7 @@ export function apply(ctx) {
       const png = await withTab(args, (c) => c.screenshot())
       const out = args.path || path.join(os.tmpdir(), `cua-browser-${Date.now()}.png`)
       fs.writeFileSync(out, png)
-      return ok(`已截图（${(png.length / 1024).toFixed(0)}KB）\n路径：${out}`)
+      return ok(`Screenshot (${(png.length / 1024).toFixed(0)}KB)\nPath: ${out}`)
     }),
   }))
 
