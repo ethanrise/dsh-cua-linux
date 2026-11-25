@@ -1,6 +1,6 @@
 # dsh-cua-linux
 
-[中文文档](README.zh.md)
+[Chinese](README.zh.md)
 
 A Linux (X11 / XWayland) computer-use backend for [DeepSeek Harness](https://github.com/deepseek-ai).
 
