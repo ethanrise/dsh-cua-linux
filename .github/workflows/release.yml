@@ -69,6 +69,20 @@ jobs:
             fi
             exit $code
           fi
+          # npm 有个已知的首次发布怪癖：只登记 0.0.0-stage 占位包，真实版本没挂上。
+          # 不在这一步断言，流水线会"绿着"发一个装不上的版本。
+          for i in 1 2 3 4 5 6; do
+            if npm view "dsh-cua-linux@${version}" version >/dev/null 2>&1; then
+              echo "::notice::已在 registry 上确认 dsh-cua-linux@${version}"
+              break
+            fi
+            if [ "$i" = 6 ]; then
+              echo "::error::dsh-cua-linux@${version} 发布后仍查不到（可能只留下 0.0.0-stage 占位包）"
+              npm view dsh-cua-linux dist-tags --json || true
+              exit 1
+            fi
+            sleep 10
+          done
           echo "::notice::已发布 dsh-cua-linux@${version}"
 
       - name: Publish release
