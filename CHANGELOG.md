@@ -63,7 +63,7 @@ Every action reports what it observed instead of a bare `ok`:
 
 ---
 
-### Pre-public development
+## Pre-public development
 
 Versions `0.0.1` through `0.3.1` below were local iterations, never published. They are
 kept for the maintainer's record; the public history starts at `0.1.0`.
