@@ -30,6 +30,14 @@ dsh plugin add ethanrise/dsh-cua-linux
 3. 控件缺失时，用 `cua_linux_screenshot` 截图并按坐标操作。截图前可用 `cua_linux_activate` 激活窗口并确认焦点，避免点击浏览器标签栏。支持图像且配置附件存储的 DSH 模型可以直接收到截图。点击和滚动会校验指针命中。键盘工具传入 `wid` 后会校验焦点。可用 `cua_linux_paste` 粘贴 Unicode，工具会替换系统剪贴板。
 4. X11 动作后会短时采样画面，有像素变化时提前返回。动画也会引起变化，继续操作前仍需确认实际结果。
 
+## 桌面进度卡
+
+在 X11 会话内调用 CUA 工具时，主显示器右上角会显示半透明卡片，包含会话标题、当前步骤和执行结果。需要指定总任务时，可让 Agent 先调用 `cua_linux_progress`，传入 `action: "start"` 和简短的 `task`。只有显式提供 `total` 才显示总步数，计数以插件工具调用为单位。DSH 会话结束后卡片短暂停留并收起，也可用 `action: "finish"` 报告最终结果。
+
+X11 点击和滚动时，光标所在的显示器顶部会短暂显示「DSH 鼠标接管中」。点击位置同时显示箭头和光圈，方便区分 DSH 的点击和自己的操作。读窗口、截图、AT-SPI 控件操作和 CDP 不会触发这两项鼠标提示。
+
+这些浮层不接收焦点或鼠标输入，`cua_linux_screenshot` 会临时隐藏它们。绘制需要系统 Python 的 GTK 3 和 Cairo 绑定（Ubuntu/Debian 对应 `python3-gi-cairo` 和 `gir1.2-gtk-3.0`）。设置 `DSH_CUA_PROGRESS=0` 后重启宿主即可关闭。缺少绘制依赖时，CUA 工具仍可使用。
+
 ## 已知边界
 
 - **只支持 X11**。原生 Wayland 窗口收不到 XTEST 事件；`cua_linux_probe` 会报告 `/dev/uinput`

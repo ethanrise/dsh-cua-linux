@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { requestAtspi } from './lib/atspi.js'
+import { createProgress } from './lib/progress.js'
 
 // Linux desktop control through AT-SPI and X11, with a separate Chromium CDP path.
 export const name = 'dsh-cua-linux'
@@ -48,6 +49,39 @@ export function apply(ctx) {
     throw new Error('dsh-cua-linux: 需要 ctx.tools.register（宿主未注入 tools 服务）')
   }
 
+  const progress = createProgress(ctx)
+  const register = (definition) => ctx.tools.register(defineTool({
+    ...definition,
+    execute: progress.track(definition.name, definition.execute),
+  }))
+
+  register({
+    name: 'cua_linux_progress',
+    description: '为当前桌面任务设置进度卡标题，或报告任务最终结果。后续 CUA 工具会自动更新当前步骤。',
+    parameters: {
+      action: { type: 'string', enum: ['start', 'finish'], required: true, description: '开始任务或报告结果。' },
+      task: { type: 'string', description: '开始时传入简短的总任务标题。' },
+      total: { type: 'integer', description: '已知的 CUA 操作总步数。没有确定计划时省略。' },
+      outcome: { type: 'string', enum: ['completed', 'aborted', 'failed'], description: '可选的最终结果，默认为 completed。' },
+    },
+    output: OUT,
+    execute: guard(async ({ action, task, total, outcome = 'completed' }, exec) => {
+      const session = exec?.agent?.session
+      if (!session || !progress.available()) return fail('The X11 progress card is unavailable in this session.')
+      if (action === 'finish') {
+        if (!['completed', 'aborted', 'failed'].includes(outcome)) return fail('Unknown task outcome.')
+        progress.finish(session, outcome)
+        return ok('Task result reported to the progress card.')
+      }
+      if (action !== 'start' || !task?.trim()) return fail('Provide a task title to start progress.')
+      if (total !== undefined && (!Number.isInteger(total) || total < 1)) {
+        return fail('The optional step count must be a positive integer.')
+      }
+      progress.start(session, task, total)
+      return ok('Task title registered. Subsequent CUA calls update the card automatically.')
+    }),
+  })
+
   const x11 = () => import('./lib/x11.js')
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -65,7 +99,7 @@ export function apply(ctx) {
   async function actVerifiedVisual({ wid = null, point = null, radius = 90, label = null }, action) {
     const x = await x11()
     const v = await import('./lib/verify.js')
-    const before = await x.captureRaw(wid)
+    const before = await progress.withoutOverlays(() => x.captureRaw(wid))
     const box = point
       ? { x: point.x - before.offsetX - radius, y: point.y - before.offsetY - radius, w: radius * 2, h: radius * 2 }
       : null
@@ -74,7 +108,7 @@ export function apply(ctx) {
       await sleep(delay)
       let after
       try {
-        after = await x.captureRaw(wid)
+        after = await progress.withoutOverlays(() => x.captureRaw(wid))
       } catch {
         return { verified: null, text: 'Input dispatched; the resulting window could not be captured' }
       }
@@ -105,7 +139,7 @@ export function apply(ctx) {
   }
 
   const snapshotLimit = 16
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_linux_observe',
     description: 'Read the AT-SPI controls for an X11 window. Use returned element IDs for actions, or a screenshot if controls are unavailable.',
     parameters: {
@@ -125,9 +159,9 @@ export function apply(ctx) {
       const controls = nodes.map(({ path, pid, ...node }, index) => ({ id: index + 1, ...node }))
       return ok(JSON.stringify({ snapshot: id, controls }))
     }),
-  }))
+  })
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_linux_element',
     description: 'Invoke a listed AT-SPI action or replace an editable control’s text with Unicode. Observe again after a dispatched action.',
     parameters: {
@@ -157,14 +191,14 @@ export function apply(ctx) {
       return ok(result.verified ? 'Text updated and read-back matches.'
         : 'Action dispatched; observe the window to confirm the intended result.')
     }),
-  }))
+  })
 
   /** 把判定结果渲染成一行，失败时用 ⚠ 而不是静默的 ✓。 */
   // verified: true=✓ / false=⚠ / null=?(无法判定)。三种状态必须能区分开，
   // 把 null 画成 ✓ 等于撒谎。
   const line = (j) => `${j.verified === true ? '✓' : j.verified === false ? '⚠' : '?'} ${j.text}`
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_linux_probe',
     description:
       '探测本机 Linux 桌面当前可用的 computer-use 通道：会话类型（X11/Wayland）、' +
@@ -187,9 +221,9 @@ export function apply(ctx) {
       const report = await probe({ cdpPorts: ports })
       return ok(report.text)
     }),
-  }))
+  })
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_linux_windows',
     description:
       '列出当前可见的 X11 窗口：可直接传给其他工具的十进制 wid、程序名（WM_CLASS）、标题、屏幕绝对坐标、尺寸，' +
@@ -208,9 +242,9 @@ export function apply(ctx) {
       const lines = wins.map((w, i) => `${i + 1}. ${fmtWindow(w)}`)
       return ok(`${wins.length} visible window(s), top to bottom:\n${lines.join('\n')}`)
     }),
-  }))
+  })
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_linux_activate',
     description: '将指定 X11 窗口提到前台并确认键盘焦点。不会点击窗口，也不会切换浏览器标签页。',
     parameters: {
@@ -222,10 +256,10 @@ export function apply(ctx) {
       await x.ensureOnTop(wid)
       return ok(`Window wid=${wid} has keyboard focus.`)
     }),
-  }))
+  })
 
   const screenshotImages = new WeakMap()
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_linux_screenshot',
     description:
       '截图并写入 PNG 文件，返回绝对路径与尺寸，支持图像的模型可直接查看。不传 wid 抓全屏；传 wid 抓该窗口（内部抓 root 再裁，' +
@@ -240,12 +274,12 @@ export function apply(ctx) {
       screenshotImages.delete(exec)
       if (attachment && !result.isError) return [...result.content, { type: 'image', attachment }]
     },
-    execute: guard(async (args, exec) => {
+    execute: desktopGuard(async (args, exec) => {
       const fs = await import('node:fs')
       const os = await import('node:os')
       const path = await import('node:path')
       const x = await x11()
-      const shot = await x.screenshot(args.wid || null)
+      const shot = await progress.withoutOverlays(() => x.screenshot(args.wid || null))
       const out = args.path || path.join(os.tmpdir(), `cua-linux-${randomUUID()}.png`)
       fs.writeFileSync(out, shot.png, { mode: 0o600 })
       const attachments = ctx.get?.('attachments')
@@ -270,9 +304,9 @@ export function apply(ctx) {
         : ''
       return ok(`Screenshot ${shot.width}x${shot.height} (${kb}KB)\nPath: ${out}${offset}`)
     }),
-  }))
+  })
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_linux_click',
     description:
       '在窗口本地像素坐标处点击。默认先把窗口置顶（activate=true）——X11 下指针命中永远是最上层窗口，' +
@@ -295,12 +329,15 @@ export function apply(ctx) {
       }
       if (args.activate !== false) await x.ensureOnTop(args.wid)
       const j = await actVerifiedVisual({ wid: args.wid, point: { x: args.x, y: args.y } }, (X) =>
-        X.click(args.wid, args.x, args.y, { button: args.button || 1, count: args.count || 1 }))
+        X.click(args.wid, args.x, args.y, {
+          button: args.button || 1, count: args.count || 1,
+          onPointer: (point) => progress.pointer(point, true),
+        }))
       return ok(`Clicked 0x${Number(args.wid).toString(16)} at (${args.x},${args.y}) button=${args.button || 1} count=${args.count || 1}\nVerify: ${line(j)}`)
     }),
-  }))
+  })
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_linux_key',
     description:
       '按组合键或特殊键，例如 "ctrl+t" / "shift+tab" / "Return" / "Escape" / "F5"。' +
@@ -316,9 +353,9 @@ export function apply(ctx) {
       })
       return ok(`Sent key: ${args.combo}\nVerify: ${line(j)}`)
     }),
-  }))
+  })
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_linux_type',
     description:
       '逐字输入 ASCII 文本（字母、数字、常用符号）。非 ASCII 字符（中文、emoji）会明确报错——' +
@@ -340,9 +377,9 @@ export function apply(ctx) {
       })
       return ok(`Typed ${text.length} character(s): ${text}\nVerify: ${line(j)}`)
     }),
-  }))
+  })
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_linux_paste',
     description: 'Paste Unicode into an explicitly focused X11 window. Replaces the clipboard; prefer cua_linux_element when an editable control is available.',
     parameters: {
@@ -355,9 +392,9 @@ export function apply(ctx) {
       const j = await actVerifiedVisual({ wid }, () => paste(wid, text))
       return ok(`Paste shortcut sent to window.\nVerify: ${line(j)}`)
     }),
-  }))
+  })
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_linux_scroll',
     description: '在窗口本地坐标处滚动滚轮。axis=v 垂直（默认），h 水平；dir=1 向下/向右，-1 向上/向左。',
     parameters: {
@@ -382,10 +419,11 @@ export function apply(ctx) {
           notches: args.notches || 3,
           axis: args.axis === 'h' ? 'h' : 'v',
           dir: args.dir === -1 ? -1 : 1,
+          onPointer: (point) => progress.pointer(point, false),
         }))
       return ok(`Scrolled 0x${Number(args.wid).toString(16)} at (${args.x},${args.y}) by ${args.notches || 3} notch(es)\nVerify: ${line(j)}`)
     }),
-  }))
+  })
   // ================= M2：Chromium CDP 通道 =================
   // 浏览器场景不要用像素：selector 定位、insertText 免输入法、视口坐标与窗口是否可见无关。
 
@@ -407,7 +445,7 @@ export function apply(ctx) {
   const PORT_PARAM = { type: 'integer', description: '可选：Chromium 调试端口，默认 9222。' }
   const TAB_PARAM = { type: 'string', description: '可选：按 URL 子串选 tab，缺省取第一个。' }
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_browser_launch',
     description:
       '启动一个带 DevTools 调试端口的 Chromium（独立 profile，不影响用户正在用的浏览器），' +
@@ -429,9 +467,9 @@ export function apply(ctx) {
       await m.waitReady(port, 25000)
       return ok(`Launched Chromium: pid=${proc.pid} port=${port}\nURL: ${args.url || 'about:blank'}`)
     }),
-  }))
+  })
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_browser_pages',
     description: '列出调试端口上的所有页面（标题 + URL），用于选择目标 tab。只读。',
     parameters: { port: PORT_PARAM },
@@ -444,9 +482,9 @@ export function apply(ctx) {
       if (!tabs.length) return ok('（没有页面）')
       return ok(tabs.map((t, i) => `${i + 1}. ${t.title || '(无标题)'} — ${t.url}`).join('\n'))
     }),
-  }))
+  })
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_browser_goto',
     description: '在指定 tab 内导航到 URL，并等到 document.readyState 为 complete。',
     parameters: {
@@ -466,9 +504,9 @@ export function apply(ctx) {
       const okHost = host ? landed.includes(host) : true
       return ok(`Navigated to ${args.url}\nLanded on: ${landed}${okHost ? '' : ' ⚠ host differs from the target'}\nTitle: ${r?.title || '(empty)'}`)
     }),
-  }))
+  })
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_browser_fill',
     description:
       '按 CSS selector 聚焦输入框并填入文本。走 Input.insertText，中文/emoji 直接写入，' +
@@ -493,9 +531,9 @@ export function apply(ctx) {
       }
       return ok(`Filled ${JSON.stringify(args.text)}\nVerify: ✓ read-back matches`)
     }),
-  }))
+  })
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_browser_click',
     description:
       '按 CSS selector 点击元素。发的是真实鼠标事件（dispatchMouseEvent + 元素中心点），' +
@@ -515,9 +553,9 @@ export function apply(ctx) {
       })
       return ok(`Clicked ${args.selector}\nVerify: ${line(j)}`)
     }),
-  }))
+  })
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_browser_key',
     description: '向当前页面发送按键：Enter / Tab / Escape / Backspace / ArrowUp / ArrowDown。',
     parameters: {
@@ -535,9 +573,9 @@ export function apply(ctx) {
       })
       return ok(`Sent key: ${args.key}\nVerify: ${line(j)}`)
     }),
-  }))
+  })
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_browser_read',
     description: '读取页面文本：传 selector 取该元素 innerText，缺省取整个 body。',
     parameters: {
@@ -552,9 +590,9 @@ export function apply(ctx) {
       const clipped = text.length > max ? `${text.slice(0, max)}\n…（已截断，共 ${text.length} 字符）` : text
       return ok(clipped || '（空）')
     }),
-  }))
+  })
 
-  ctx.tools.register(defineTool({
+  register({
     name: 'cua_browser_screenshot',
     description:
       '页面截图写 PNG（走渲染管线，与窗口是否可见、是否被遮挡无关），返回路径。',
@@ -572,6 +610,6 @@ export function apply(ctx) {
       fs.writeFileSync(out, png)
       return ok(`Screenshot (${(png.length / 1024).toFixed(0)}KB)\nPath: ${out}`)
     }),
-  }))
+  })
 
 }

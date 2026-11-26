@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## 0.3.0
+
+### X11 desktop overlays
+
+- The translucent upper-right progress card shows the overall task, current CUA step, and result. The new `cua_linux_progress` tool lets an agent set a task title and an optional step count, or report the final outcome.
+- X11 clicks and scrolls show a brief “DSH 鼠标接管中” notice at the top of the pointer's monitor. Clicks also show a blue ring and arrow centered on the actual click location.
+- The overlays preserve keyboard focus and pass mouse input through. X11 screenshots and action feedback samples temporarily hide them.
+
+The overlays use GTK 3 and Cairo bindings for system Python. On Debian and Ubuntu, install `gir1.2-gtk-3.0` and `python3-gi-cairo`. Set `DSH_CUA_PROGRESS=0` before starting the host to disable the overlays. Existing CUA tools can run without the overlay dependencies.
+
+The right-hand card was confirmed in a DSH Desktop session. The mouse banner and click marker were verified in the X11 smoke test, including exact click position, input pass-through, and screenshot exclusion.
+
 ## 0.2.0
 
 - Added AT-SPI window observation and element actions, including Unicode text replacement with read-back verification.

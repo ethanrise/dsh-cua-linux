@@ -46,6 +46,12 @@ AT-SPI tools additionally use system Python 3 with GObject and AT-SPI bindings (
 3. If the window or control is unavailable through AT-SPI, take a screenshot. Image-capable DSH routes with an attachment store can receive the PNG directly. Coordinate actions check the actual pointer target. For keyboard actions pass `wid` to require the target to have focus.
 4. X11 samples post-action pixels for up to 400 ms of scheduled waits. Changes are observations and may come from animations. Confirm the intended result before repeating an action.
 
+## Desktop progress card
+
+In an X11 DSH session, the upper-right card displays the session title, current CUA operation, and its result. To set a task title, call `cua_linux_progress` with `action: "start"` and a short `task`. Pass `total` only when the expected number of CUA calls is known. The card dismisses shortly after the DSH turn ends. Use `action: "finish"` to report a task result explicitly.
+
+X11 clicks and scrolls show a short mouse-control banner at the top of the pointer’s monitor. Clicks also show an arrow and ring at the actual click location. These overlays pass through mouse input, leave keyboard focus with the current window, and hide during `cua_linux_screenshot`. Rendering requires GTK 3 and Cairo bindings for system Python (Ubuntu/Debian packages `gir1.2-gtk-3.0` and `python3-gi-cairo`). Set `DSH_CUA_PROGRESS=0` before starting the host to disable it. CUA tools continue to work when rendering dependencies are unavailable.
+
 ## Known limits
 
 - **X11 only.** Native Wayland windows ignore XTEST. `cua_linux_probe` reports whether

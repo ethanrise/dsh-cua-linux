@@ -10,10 +10,10 @@ function fakeCtx() {
 
 test('插件名与包名一致', () => assert.equal(name, 'dsh-cua-linux'))
 
-test('注册 19 个工具且都有描述与 execute', () => {
+test('注册 20 个工具且都有描述与 execute', () => {
   const { reg, ctx } = fakeCtx()
   apply(ctx)
-  assert.equal(reg.length, 19)
+  assert.equal(reg.length, 20)
   for (const t of reg) {
     assert.ok(t.name.startsWith('cua_'), t.name)
     assert.ok(t.description.length > 20, t.name)
