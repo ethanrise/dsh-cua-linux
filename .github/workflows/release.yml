@@ -39,6 +39,9 @@ jobs:
 
       - run: npm test
 
+      - name: Prepare release notes
+        run: node scripts/release-notes.mjs "$GITHUB_REF_NAME" > "${RUNNER_TEMP}/dsh-release-notes.md"
+
       - name: Pack
         run: |
           npm pack
@@ -77,6 +80,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dsh-cua-linux.tgz
+          body_path: ${{ runner.temp }}/dsh-release-notes.md
           generate_release_notes: true
           fail_on_unmatched_files: true
 
