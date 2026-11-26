@@ -3,10 +3,18 @@
  * 单测里不要放这类用例（X socket 会挂住事件循环），单独跑：
  *   node scripts/smoke-x11.mjs
  */
+import assert from 'node:assert/strict'
 import * as x11 from '../lib/x11.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+
+const { X, root } = await x11.connect()
+const destroyed = X.AllocID()
+await x11.call(X, 'CreateWindow', destroyed, root, 0, 0, 1, 1, 0, 0, 0, 0, {})
+await x11.call(X, 'DestroyWindow', destroyed)
+await assert.rejects(x11.windowSize(destroyed), /Bad drawable/i)
+console.log('已销毁窗口返回工具错误，X11 连接仍可用')
 
 const wins = await x11.listWindows()
 console.log(`可见窗口 ${wins.length} 个`)

@@ -10,10 +10,10 @@ function fakeCtx() {
 
 test('插件名与包名一致', () => assert.equal(name, 'dsh-cua-linux'))
 
-test('注册 15 个工具且都有描述与 execute', () => {
+test('注册 19 个工具且都有描述与 execute', () => {
   const { reg, ctx } = fakeCtx()
   apply(ctx)
-  assert.equal(reg.length, 15)
+  assert.equal(reg.length, 19)
   for (const t of reg) {
     assert.ok(t.name.startsWith('cua_'), t.name)
     assert.ok(t.description.length > 20, t.name)
@@ -28,6 +28,15 @@ test('type 工具对非 ASCII 明确失败而不是静默', async () => {
   const out = await tool.execute({ text: '知识星球' })
   assert.equal(out.ok, false)
   assert.match(out.result, /Non-ASCII/)
+})
+
+test('element rejects an unknown snapshot without opening the display', async () => {
+  const { reg, ctx } = fakeCtx()
+  apply(ctx)
+  const tool = reg.find((entry) => entry.name === 'cua_linux_element')
+  const out = await tool.execute({ wid: 42, snapshot: 'unknown', element: 1, action: 'click' })
+  assert.equal(out.ok, false)
+  assert.match(out.result, /stale element/)
 })
 
 test('PNG 编码器产出合法签名与 IHDR 尺寸', () => {

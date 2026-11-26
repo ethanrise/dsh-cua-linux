@@ -4,17 +4,7 @@
 
 A Linux (X11 / XWayland) computer-use backend for [DeepSeek Harness](https://github.com/deepseek-ai).
 
-The official `dsh-computer-use` plugin drives the desktop through the `cua-driver` native
-agent, which has no Linux provider: on Linux its accessibility tree comes back empty, clicks
-never reach the target window, and text input is refused. This plugin fills that gap, and adds
-a second channel that browsers deserve.
-
-Two channels, picked by target:
-
-| Channel | Used for | How |
-|---|---|---|
-| **CDP** | Chromium / Edge / Electron pages | DevTools Protocol over the built-in `fetch` + `WebSocket`. No extra dependency. |
-| **X11** | everything else | Raw X11 protocol via the pure-JS `x11` package; XTEST for input. |
+Use Chromium's CDP for web content. For desktop windows, use AT-SPI controls when the application exposes them and X11 screenshots or input for the rest.
 
 ## Install
 
@@ -23,7 +13,7 @@ dsh plugin add ethanrise/dsh-cua-linux
 ```
 
 Requirements: Linux with an X11 session (or XWayland for X11 clients), Node ≥ 22.18.
-No `xdotool`, no ImageMagick, no Python.
+AT-SPI tools additionally use system Python 3 with GObject and AT-SPI bindings (Ubuntu/Debian: `python3-gi` and `gir1.2-atspi-2.0`). X11 and CDP tools run without Python.
 
 ## Tools
 
@@ -32,6 +22,10 @@ No `xdotool`, no ImageMagick, no Python.
 | `cua_linux_probe` | Read-only: session type, X11 sockets, XTEST, `/dev/uinput`, libei, external tools, open DevTools ports |
 | `cua_linux_windows` | Enumerate visible windows: id, WM_CLASS, title, position, size, stacking order |
 | `cua_linux_screenshot` | PNG of the whole screen or one window (root capture, cropped — child-window `GetImage` returns black under a compositor) |
+| `cua_linux_activate` | Bring the target window forward and confirm focus without clicking or switching browser tabs |
+| `cua_linux_observe` | Read a window’s AT-SPI control snapshot and element IDs |
+| `cua_linux_element` | Invoke a listed action or replace an editable control’s Unicode text and read it back |
+| `cua_linux_paste` | Paste Unicode into a focused window, replacing the system clipboard |
 | `cua_linux_click` | Click at window-local coordinates; activates the window first; left/middle/right, repeated |
 | `cua_linux_key` | Key combos and named keys (`ctrl+t`, `Return`, `Escape`) |
 | `cua_linux_type` | ASCII text via XTEST. Non-ASCII is refused explicitly — XTEST cannot produce an IME commit |
@@ -45,42 +39,19 @@ No `xdotool`, no ImageMagick, no Python.
 | `cua_browser_read` | `innerText` of a selector, or the whole body |
 | `cua_browser_screenshot` | PNG through the render pipeline; works while the window is hidden |
 
-## Every action verifies itself
+## Desktop workflow
 
-An injection tool that returns `ok` without looking is worse than useless: the model keeps
-acting on a state it never reached. Each action therefore reports what was observed.
-
-- X11: a **region** around the action point is compared before/after (90 px for clicks,
-  220 px for scrolls); the whole window is a fallback tier so "the change happened elsewhere"
-  is reported rather than missed.
-- A **noise baseline** is taken first (two frames 250 ms apart), so a blinking caret is not
-  mistaken for a successful action. The decision is signal-to-noise, not raw difference.
-- Browser `fill` reads `element.value` back and fails on mismatch.
-- Browser `click` / `key` watch DOM mutations and URL changes.
-
-Three outcomes, deliberately distinct:
-
-```
-✓ Area around the action point changed (7471 px / 31.21%)
-⚠ nothing changed around the action point or elsewhere — the event was dispatched
-  but no feedback was observed; it may be a repeat action, a non-interactive
-  target, or an operation that does not repaint
-? Undecidable: the region changes on its own (1.20%), while the action changed
-  only 0.13%
-```
-
-`⚠` says the event **was** sent; it does not say the operation failed. A second click on an
-already-focused field legitimately changes nothing, and wording it as "failed" invites a retry
-that can be harmful.
+1. List windows with `cua_linux_windows`, then observe the chosen window with `cua_linux_observe`.
+2. Pass the returned snapshot and element ID to `cua_linux_element`. Observe again after dispatch. Text replacement reports whether read-back matched.
+3. If the window or control is unavailable through AT-SPI, take a screenshot. Image-capable DSH routes with an attachment store can receive the PNG directly. Coordinate actions check the actual pointer target. For keyboard actions pass `wid` to require the target to have focus.
+4. X11 samples post-action pixels for up to 400 ms of scheduled waits. Changes are observations and may come from animations. Confirm the intended result before repeating an action.
 
 ## Known limits
 
 - **X11 only.** Native Wayland windows ignore XTEST. `cua_linux_probe` reports whether
   `/dev/uinput` or libei are available; a Wayland backend is not implemented yet.
-- **Non-ASCII input over X11 is not supported.** Use the CDP channel for browsers, or the
-  plugin will tell you why instead of dropping characters.
-- **X11 injection is global.** Events go to the focused window, so the target must be
-  activated — which the tools do by default, at the cost of stealing focus.
+- **Control coverage depends on the application.** Window matching uses the X11 PID and title. An unambiguous window may also match an AT-SPI frame with the same title exposed by a descendant process. The X11 screenshot is cropped from the visible desktop and can include overlapping windows.
+- **X11 input uses the system pointer and keyboard focus.** Click and scroll request focus by default if the target is not already focused. `cua_linux_type` takes ASCII. For Unicode use an editable element or `cua_linux_paste` where the app accepts Ctrl+V.
 - **New tools need a restart.** The harness does not re-run a plugin's `apply()` for an
   already-loaded bundle, so upgrading the package requires restarting DSH.
 

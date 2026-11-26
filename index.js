@@ -1,22 +1,7 @@
-/**
- * dsh-cua-linux —— 给 DSH 补上 Linux（X11 / XWayland）的 computer-use 后端。
- *
- * 通道优先级：CDP（浏览器，见 M2） > X11 像素。
- *
- * 工具：
- *   cua_linux_probe       只读探测：这台机器能怎么操作
- *   cua_linux_windows     枚举可见窗口（含 app / 标题 / 屏幕坐标 / 尺寸）
- *   cua_linux_screenshot  截图（整屏或单窗口）写 PNG 到磁盘，返回路径
- *   cua_linux_click       点击（窗口本地坐标，默认先置顶）
- *   cua_linux_key         组合键 / 特殊键
- *   cua_linux_type        输入 ASCII 文本（非 ASCII 明确报错，不静默失败）
- *   cua_linux_scroll      滚轮
- *
- * 已知边界：
- *   - 只对 X11 / XWayland 客户端有效；原生 Wayland 窗口收不到 XTEST 事件。
- *   - 中文无法用 XTEST 注入（XTEST 只能发 keycode），需要 CDP 或剪贴板，M2 补。
- *   - 目标窗口必须先置顶，否则命中会落到上层窗口（工具默认自动置顶）。
- */
+import { randomUUID } from 'node:crypto'
+import { requestAtspi } from './lib/atspi.js'
+
+// Linux desktop control through AT-SPI and X11, with a separate Chromium CDP path.
 export const name = 'dsh-cua-linux'
 
 export const inject = ['tools']
@@ -46,16 +31,16 @@ const ok = (result) => ({ ok: true, result })
 const fail = (result) => ({ ok: false, result })
 
 /** 统一包一层：把异常变成 ok:false，而不是把栈抛给模型。 */
-const guard = (fn) => async (args) => {
+const guard = (fn) => async (args, exec) => {
   try {
-    return await fn(args || {})
+    return await fn(args || {}, exec)
   } catch (err) {
     return fail(`✗ ${err && err.message ? err.message : String(err)}`)
   }
 }
 
 function fmtWindow(w) {
-  return `0x${w.wid.toString(16)}  ${(w.app || '?').padEnd(16)} ${String(w.title || '(无标题)').slice(0, 40).padEnd(40)} ${w.w}x${w.h}+${w.x}+${w.y}`
+  return `wid=${w.wid} (0x${w.wid.toString(16)})  ${(w.app || '?').padEnd(16)} ${String(w.title || '(无标题)').slice(0, 40).padEnd(40)} ${w.w}x${w.h}+${w.x}+${w.y}`
 }
 
 export function apply(ctx) {
@@ -66,55 +51,113 @@ export function apply(ctx) {
   const x11 = () => import('./lib/x11.js')
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-  /**
-   * X11 动作闭环：拍前图 → 执行 → 等界面响应 → 拍后图 → 比像素。
-   * wid 为空时比较整个屏幕（用于不知道焦点在哪的操作，比如 cua_linux_type）。
-   */
-  /**
-   * 动作闭环（区域版）：
-   *   1) 动作前连拍两张 → 判断该区域本身是否在动（光标闪烁/动画/视频）
-   *   2) 动作后再拍一张 → 先比动作点附近，再比整窗（影响可能在别处）
-   * 只有区域稳定时，前后比对才有意义。
-   */
-  async function actVerifiedVisual({ wid = null, point = null, radius = 90, label = null, settleMs = 280 }, action) {
+  // Serialize desktop input within this plugin instance. CDP uses its own connection.
+  let desktop = Promise.resolve()
+  const desktopGuard = (fn) => guard((args, exec) => {
+    const run = desktop.then(() => {
+      exec?.signal?.throwIfAborted()
+      return fn(args, exec)
+    })
+    desktop = run.catch(() => {})
+    return run
+  })
+
+  async function actVerifiedVisual({ wid = null, point = null, radius = 90, label = null }, action) {
     const x = await x11()
     const v = await import('./lib/verify.js')
-    const shoot = () => x.captureRaw(wid)
-
-    // 采三帧：光标闪烁周期约 530ms，单次 130ms 间隔会漏掉整个闪烁
-    const b1 = await shoot()
-    await sleep(250)
-    const b2 = await shoot()
-    await sleep(250)
-    const b3 = await shoot()
-
-    const width = b2.width
+    const before = await x.captureRaw(wid)
     const box = point
-      ? { x: point.x - radius, y: point.y - radius, w: radius * 2, h: radius * 2 }
+      ? { x: point.x - before.offsetX - radius, y: point.y - before.offsetY - radius, w: radius * 2, h: radius * 2 }
       : null
-
-    // 噪声 = 动作前两帧之间的自发变化（光标闪烁/动画）
-    const noise = Math.max(
-      (v.diffRGBA(b1.rgba, b2.rgba, 8, { width, box }) || {}).ratio || 0,
-      (v.diffRGBA(b2.rgba, b3.rgba, 8, { width, box }) || {}).ratio || 0,
-    )
-
     await action(x)
-    await sleep(settleMs)
-    const after = await shoot()
-
-    const regionDiff = box
-      ? v.diffRGBA(b2.rgba, after.rgba, 8, { width, box })
-      : v.diffRGBA(b2.rgba, after.rgba)
-    const windowDiff = box ? v.diffRGBA(b2.rgba, after.rgba) : null
-
-    return v.judgeTwoTier({
-      noise,
-      signal: regionDiff,
-      window: windowDiff,
-      areaLabel: box ? 'Area around the action point' : label || (wid ? 'Window' : 'Whole screen'),
-    })
+    for (const delay of [35, 65, 120, 180]) {
+      await sleep(delay)
+      let after
+      try {
+        after = await x.captureRaw(wid)
+      } catch {
+        return { verified: null, text: 'Input dispatched; the resulting window could not be captured' }
+      }
+      if (before.width !== after.width || before.height !== after.height ||
+          before.offsetX !== after.offsetX || before.offsetY !== after.offsetY) {
+        return { verified: null, text: 'Input dispatched; the captured area changed size' }
+      }
+      const region = v.diffRGBA(before.rgba, after.rgba, 8, { width: before.width, box })
+      const window = box ? v.diffRGBA(before.rgba, after.rgba) : null
+      if (Math.max(region.ratio, window?.ratio || 0) >= 0.001) {
+        return { verified: null, text: `Input dispatched; ${label || 'screen'} pixels changed. Verify the intended result.` }
+      }
+    }
+    return { verified: null, text: 'Input dispatched; no visible result confirmed within the observation period' }
   }
+
+  // A new observation of a window supersedes its previous element IDs.
+  const snapshots = new Map()
+  async function accessibleWindow(wid) {
+    const x = await x11()
+    const target = await x.windowIdentity(wid)
+    // Chromium-derived apps may publish the accessibility tree from a child process.
+    target.allowDescendants = !!(target.pid && target.title) &&
+      (await x.listWindows({ onlyMapped: false })).filter(
+        (window) => window.pid === target.pid && window.title === target.title,
+      ).length === 1
+    return target
+  }
+
+  const snapshotLimit = 16
+  ctx.tools.register(defineTool({
+    name: 'cua_linux_observe',
+    description: 'Read the AT-SPI controls for an X11 window. Use returned element IDs for actions, or a screenshot if controls are unavailable.',
+    parameters: {
+      wid: { type: 'integer', required: true, description: 'Target X11 window id.' },
+      limit: { type: 'integer', description: 'Maximum nodes, 1–500. Default 120.' },
+    },
+    output: OUT,
+    execute: desktopGuard(async ({ wid, limit = 120 }, exec) => {
+      snapshots.delete(wid)
+      const window = await accessibleWindow(wid)
+      if (!window.pid || !window.title) return fail('This X11 window has no PID or title for AT-SPI matching.')
+      limit = Math.max(1, Math.min(500, limit))
+      const { nodes } = await requestAtspi({ operation: 'observe', window, limit }, exec?.signal)
+      const id = randomUUID()
+      if (snapshots.size >= snapshotLimit) snapshots.delete(snapshots.keys().next().value)
+      snapshots.set(wid, { id, nodes, window, limit, expires: Date.now() + 120_000 })
+      const controls = nodes.map(({ path, pid, ...node }, index) => ({ id: index + 1, ...node }))
+      return ok(JSON.stringify({ snapshot: id, controls }))
+    }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'cua_linux_element',
+    description: 'Invoke a listed AT-SPI action or replace an editable control’s text with Unicode. Observe again after a dispatched action.',
+    parameters: {
+      wid: { type: 'integer', required: true, description: 'Target X11 window id.' },
+      snapshot: { type: 'string', required: true, description: 'Snapshot from cua_linux_observe.' },
+      element: { type: 'integer', required: true, description: 'Element id in that snapshot.' },
+      action: { type: 'string', description: 'Exact action name from the observation.' },
+      text: { type: 'string', description: 'Replacement text. Provide either action or text.' },
+    },
+    output: OUT,
+    execute: desktopGuard(async (args, exec) => {
+      if ((args.action === undefined) === (args.text === undefined)) return fail('Provide either action or text.')
+      const snapshot = snapshots.get(args.wid)
+      const node = snapshot?.nodes[args.element - 1]
+      if (!node || snapshot.id !== args.snapshot || snapshot.expires < Date.now()) {
+        return fail('Invalid or stale element. Observe the target window again.')
+      }
+      const window = await accessibleWindow(args.wid)
+      if (window.pid !== snapshot.window.pid || window.title !== snapshot.window.title) {
+        return fail('The X11 window changed. Observe it again.')
+      }
+      snapshots.delete(args.wid)
+      const result = await requestAtspi({
+        operation: args.text === undefined ? 'action' : 'set_text',
+        window, node, limit: snapshot.limit, action: args.action, text: args.text,
+      }, exec?.signal)
+      return ok(result.verified ? 'Text updated and read-back matches.'
+        : 'Action dispatched; observe the window to confirm the intended result.')
+    }),
+  }))
 
   /** 把判定结果渲染成一行，失败时用 ⚠ 而不是静默的 ✓。 */
   // verified: true=✓ / false=⚠ / null=?(无法判定)。三种状态必须能区分开，
@@ -149,7 +192,7 @@ export function apply(ctx) {
   ctx.tools.register(defineTool({
     name: 'cua_linux_windows',
     description:
-      '列出当前可见的 X11 窗口：窗口 id、程序名（WM_CLASS）、标题、屏幕绝对坐标、尺寸，' +
+      '列出当前可见的 X11 窗口：可直接传给其他工具的十进制 wid、程序名（WM_CLASS）、标题、屏幕绝对坐标、尺寸，' +
       '按叠放顺序自上而下。用于先看清桌面再决定操作哪个窗口。只读。',
     parameters: {
       minArea: {
@@ -168,25 +211,64 @@ export function apply(ctx) {
   }))
 
   ctx.tools.register(defineTool({
+    name: 'cua_linux_activate',
+    description: '将指定 X11 窗口提到前台并确认键盘焦点。不会点击窗口，也不会切换浏览器标签页。',
+    parameters: {
+      wid: { type: 'integer', required: true, description: '使用 cua_linux_windows 返回的十进制 wid。' },
+    },
+    output: OUT,
+    execute: desktopGuard(async ({ wid }) => {
+      const x = await x11()
+      await x.ensureOnTop(wid)
+      return ok(`Window wid=${wid} has keyboard focus.`)
+    }),
+  }))
+
+  const screenshotImages = new WeakMap()
+  ctx.tools.register(defineTool({
     name: 'cua_linux_screenshot',
     description:
-      '截图并写入 PNG 文件，返回绝对路径与尺寸。不传 wid 抓全屏；传 wid 抓该窗口（内部抓 root 再裁，' +
+      '截图并写入 PNG 文件，返回绝对路径与尺寸，支持图像的模型可直接查看。不传 wid 抓全屏；传 wid 抓该窗口（内部抓 root 再裁，' +
       '避免 compositor 下对子窗口取图拿到黑图）。文件写在系统临时目录，可用路径直接查看。',
     parameters: {
-      wid: { type: 'integer', description: '可选：窗口 id（cua_linux_windows 输出，十六进制转十进制）。' },
+      wid: { type: 'integer', description: '可选：直接使用 cua_linux_windows 输出的十进制 wid。' },
       path: { type: 'string', description: '可选：输出路径，默认写到系统临时目录。' },
     },
     output: OUT,
-    execute: guard(async (args) => {
+    finalizeContent(exec, result) {
+      const attachment = screenshotImages.get(exec)
+      screenshotImages.delete(exec)
+      if (attachment && !result.isError) return [...result.content, { type: 'image', attachment }]
+    },
+    execute: guard(async (args, exec) => {
       const fs = await import('node:fs')
       const os = await import('node:os')
       const path = await import('node:path')
       const x = await x11()
       const shot = await x.screenshot(args.wid || null)
-      const out = args.path || path.join(os.tmpdir(), `cua-linux-${Date.now()}.png`)
-      fs.writeFileSync(out, shot.png)
+      const out = args.path || path.join(os.tmpdir(), `cua-linux-${randomUUID()}.png`)
+      fs.writeFileSync(out, shot.png, { mode: 0o600 })
+      const attachments = ctx.get?.('attachments')
+      const llm = ctx.get?.('llm')
+      const config = exec?.agent?.session?.requestHeader?.()?.config
+      const provider = config?.provider ?? exec?.agent?.options?.provider
+      const model = config?.model ?? exec?.agent?.options?.model
+      if (attachments?.saveImages && llm?.resolveModelInfo && provider && model && !exec.signal?.aborted) {
+        try {
+          const info = await llm.resolveModelInfo(provider, model, exec.signal)
+          if (info.inputModalities?.includes('image') && !exec.signal?.aborted) {
+            const [attachment] = await attachments.saveImages([{ data: shot.png, mediaType: 'image/png' }])
+            if (attachment) screenshotImages.set(exec, attachment)
+          }
+        } catch {
+          // The returned PNG path is still usable.
+        }
+      }
       const kb = (shot.png.length / 1024).toFixed(0)
-      return ok(`Screenshot ${shot.width}x${shot.height} (${kb}KB)\nPath: ${out}`)
+      const offset = shot.offsetX || shot.offsetY
+        ? `\nAdd (${shot.offsetX}, ${shot.offsetY}) to image coordinates for window-local input.`
+        : ''
+      return ok(`Screenshot ${shot.width}x${shot.height} (${kb}KB)\nPath: ${out}${offset}`)
     }),
   }))
 
@@ -194,7 +276,7 @@ export function apply(ctx) {
     name: 'cua_linux_click',
     description:
       '在窗口本地像素坐标处点击。默认先把窗口置顶（activate=true）——X11 下指针命中永远是最上层窗口，' +
-      '不置顶的点击会静默落到别的窗口。坐标以窗口左上角为原点。',
+      '如果坐标命中其他窗口，工具会拒绝点击。坐标以窗口左上角为原点。',
     parameters: {
       wid: { type: 'integer', required: true, description: '目标窗口 id。' },
       x: { type: 'integer', required: true, description: '窗口本地 x（像素）。' },
@@ -204,7 +286,7 @@ export function apply(ctx) {
       activate: { type: 'boolean', description: '是否先置顶窗口，默认 true。' },
     },
     output: OUT,
-    execute: guard(async (args) => {
+    execute: desktopGuard(async (args) => {
       const x = await x11()
       // 先校验坐标：越界是确定性失败，不该靠"看画面有没有变"来发现
       const size = await x.windowSize(args.wid)
@@ -222,13 +304,16 @@ export function apply(ctx) {
     name: 'cua_linux_key',
     description:
       '按组合键或特殊键，例如 "ctrl+t" / "shift+tab" / "Return" / "Escape" / "F5"。' +
-      '发给当前焦点窗口，因此通常需要先 cua_linux_click 把焦点点进去。',
+      '已知目标时传 wid 校验焦点。若目标不在前台，先用 cua_linux_click 聚焦。',
     parameters: {
+      wid: { type: 'integer', description: 'Optional target window id. If set, the window must have keyboard focus.' },
       combo: { type: 'string', required: true, description: '组合键，用 + 连接，如 "ctrl+shift+t"。' },
     },
     output: OUT,
-    execute: guard(async (args) => {
-      const j = await actVerifiedVisual({}, (X) => X.pressKey(args.combo))
+    execute: desktopGuard(async (args) => {
+      const j = await actVerifiedVisual({ wid: args.wid }, async (X) => {
+        await X.pressKey(args.combo, args.wid)
+      })
       return ok(`Sent key: ${args.combo}\nVerify: ${line(j)}`)
     }),
   }))
@@ -237,20 +322,38 @@ export function apply(ctx) {
     name: 'cua_linux_type',
     description:
       '逐字输入 ASCII 文本（字母、数字、常用符号）。非 ASCII 字符（中文、emoji）会明确报错——' +
-      'XTEST 只能发 keycode，产生不了输入法的 commit 事件，中文请走 CDP 通道。' +
+      'XTEST 只能发 keycode，产生不了输入法的 commit 事件，中文请用 cua_linux_element、cua_linux_paste 或浏览器 CDP。' +
       '注意：目标输入框若开着中文输入法，字母会进入候选串（composition）而不是直接上屏。',
     parameters: {
+      wid: { type: 'integer', description: 'Optional target window id. If set, the window must have keyboard focus.' },
       text: { type: 'string', required: true, description: '要输入的 ASCII 文本。' },
     },
     output: OUT,
-    execute: guard(async (args) => {
+    execute: desktopGuard(async (args) => {
       const text = String(args.text ?? '')
       const bad = [...text].find((c) => c.charCodeAt(0) > 0x7e)
       if (bad !== undefined) {
-        return fail(`✗ Non-ASCII character ${JSON.stringify(bad)}: XTEST cannot inject it — use the CDP channel (browsers) or the clipboard`)
+        return fail(`✗ Non-ASCII character ${JSON.stringify(bad)}: XTEST cannot inject it — use cua_linux_element, cua_linux_paste, or the browser CDP tools`)
       }
-      const j = await actVerifiedVisual({}, (X) => X.typeAscii(text))
+      const j = await actVerifiedVisual({ wid: args.wid }, async (X) => {
+        await X.typeAscii(text, args.wid)
+      })
       return ok(`Typed ${text.length} character(s): ${text}\nVerify: ${line(j)}`)
+    }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'cua_linux_paste',
+    description: 'Paste Unicode into an explicitly focused X11 window. Replaces the clipboard; prefer cua_linux_element when an editable control is available.',
+    parameters: {
+      wid: { type: 'integer', required: true, description: 'Focused target window id.' },
+      text: { type: 'string', required: true, description: 'Text to place on the clipboard and paste.' },
+    },
+    output: OUT,
+    execute: desktopGuard(async ({ wid, text }) => {
+      const { paste } = await import('./lib/clipboard.js')
+      const j = await actVerifiedVisual({ wid }, () => paste(wid, text))
+      return ok(`Paste shortcut sent to window.\nVerify: ${line(j)}`)
     }),
   }))
 
@@ -267,7 +370,7 @@ export function apply(ctx) {
       activate: { type: 'boolean', description: '是否先置顶，默认 true。' },
     },
     output: OUT,
-    execute: guard(async (args) => {
+    execute: desktopGuard(async (args) => {
       const x = await x11()
       const size = await x.windowSize(args.wid)
       if (args.x < 0 || args.y < 0 || args.x >= size.width || args.y >= size.height) {
@@ -309,7 +412,7 @@ export function apply(ctx) {
     description:
       '启动一个带 DevTools 调试端口的 Chromium（独立 profile，不影响用户正在用的浏览器），' +
       '等待端口就绪后返回。之后可用 cua_browser_* 系列工具直控。' +
-      '注意：已运行的 Chrome 无法事后附加调试端口，必须这样才能接管。',
+      '注意：普通 Chrome 实例未开放调试端口时，可用本工具启动一个独立实例走 CDP。若必须使用现有窗口或登录状态，改用 cua_linux_*。',
     parameters: {
       port: { type: 'integer', description: '调试端口，默认 9222。' },
       url: { type: 'string', description: '启动后打开的地址，默认 about:blank。' },

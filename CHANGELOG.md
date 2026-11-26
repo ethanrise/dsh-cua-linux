@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## 0.2.0
+
+- Added AT-SPI window observation and element actions, including Unicode text replacement with read-back verification.
+- Added X11 window activation without a click, focus and pointer target checks, and Unicode clipboard paste.
+- Window lists now return decimal IDs ready to pass to tools. Screenshots can be attached directly on DSH routes with image input and attachment storage.
+- Shortened coordinate-action waits and distinguished visible feedback from confirmation of the intended result.
+- Fixed an X11 error handling bug that could terminate the DSH host when a window disappeared during a request.
+- Verified GTK controls, WeChat's coordinate fallback, screenshot attachments, and Chromium CDP Unicode form submission.
+
+X11 screenshots capture visible desktop pixels, so overlapping windows can obscure the target. Chrome's address bar can occasionally require a second Return after X11 text entry. The desktop progress overlay remains in the backlog.
+
 ## 0.1.0 — first public release
 
 Two channels, chosen by target: X11 for the desktop, the DevTools Protocol for Chromium.

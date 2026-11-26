@@ -4,48 +4,37 @@
 
 给 DeepSeek Harness 补上 Linux（X11 / XWayland）的 computer-use 后端。
 
-官方 `dsh-computer-use` 走 `cua-driver` 原生驱动，没有 Linux provider：在 Linux 上 AX 树为空、
-点击落不到目标窗口、文本输入被拒绝。本插件补的就是这一层，并且额外提供浏览器该走的那条通道。
-
 ## 安装
 
 ```sh
 dsh plugin add ethanrise/dsh-cua-linux
 ```
 
-要求：X11 会话（或 XWayland）、Node ≥ 22.18。不需要 `xdotool`、ImageMagick、Python。
+要求：X11 会话（或 XWayland）、Node ≥ 22.18。AT-SPI 工具需要系统 Python 3 和 GObject/AT-SPI 绑定（Ubuntu/Debian 对应 `python3-gi`、`gir1.2-atspi-2.0`）。X11 和 CDP 工具可独立运行。
 
-## 两条通道
+## 操作通道
 
 | 通道 | 适用 | 原理 |
 |---|---|---|
 | **CDP** | Chromium / Edge / Electron 页面 | DevTools Protocol，走 Node 内置 `fetch` + `WebSocket`，零依赖 |
+| **AT-SPI** | 暴露可访问控件的桌面应用 | 按窗口读控件树、执行控件动作、写入并读回 Unicode |
 | **X11** | 其他一切 | 纯 JS 的 `x11` 包直连 X server，XTEST 注入 |
 
 浏览器场景不要用像素：selector 定位、`insertText` 免输入法、视口坐标与窗口是否可见无关。
 实测同一个搜索任务，X11 通道输中文要 1263ms（剪贴板握手），CDP 是 `insertText` 立即完成。
 
-## 动作闭环
+## 桌面操作流程
 
-注入类工具最大的问题是「静默成功」。每个动作都带一条可复核的判定：
-
-- X11：比动作点**附近**的区域（点击 90px、滚动 220px），整窗作为兜底
-- 先采两帧（间隔 250ms）测「自发变化率」，光标闪烁不再被当成动作生效
-- 浏览器 `fill` 读回 `element.value` 严格比对；`click` / `key` 看 DOM 突变与 URL 变化
-
-三种结论刻意分开，实测输出如下（工具报文统一用英文，便于国际化）：
-
-```
-✓ Area around the action point changed (7471 px / 31.21%)      生效
-⚠ nothing changed around the action point or elsewhere …        已发出但无反馈
-? Undecidable: the region changes on its own (1.20%) …          无法判定（转圈/视频）
-```
+1. 用 `cua_linux_windows` 找到目标窗口，再用 `cua_linux_observe` 读取控件。
+2. 将返回的快照和元素 ID 传给 `cua_linux_element`，执行控件动作或替换文本。动作后重新观察，文本替换会报告读回是否一致。
+3. 控件缺失时，用 `cua_linux_screenshot` 截图并按坐标操作。截图前可用 `cua_linux_activate` 激活窗口并确认焦点，避免点击浏览器标签栏。支持图像且配置附件存储的 DSH 模型可以直接收到截图。点击和滚动会校验指针命中。键盘工具传入 `wid` 后会校验焦点。可用 `cua_linux_paste` 粘贴 Unicode，工具会替换系统剪贴板。
+4. X11 动作后会短时采样画面，有像素变化时提前返回。动画也会引起变化，继续操作前仍需确认实际结果。
 
 ## 已知边界
 
 - **只支持 X11**。原生 Wayland 窗口收不到 XTEST 事件；`cua_linux_probe` 会报告 `/dev/uinput`
   和 libei 的可用性，Wayland 后端尚未实现
-- **X11 下无法输入非 ASCII**（XTEST 只能发 keycode），浏览器请走 CDP
+- **窗口和控件覆盖取决于应用**。AT-SPI 按 X11 窗口的 PID 和标题匹配。窗口唯一时，也可匹配其子进程暴露的同名控件树。X11 截图取自可见桌面，会包含遮挡。
 - **X11 注入是全局的**：事件发给焦点窗口，所以工具默认会先激活目标窗口（代价是抢焦点）
 - **新工具要重启才生效**：宿主不会对已加载的插件重跑 `apply()`，升级包后需重启 DSH
 
